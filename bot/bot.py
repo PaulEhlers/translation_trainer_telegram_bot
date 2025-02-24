@@ -37,9 +37,6 @@ def load_words():
         return []
 
 
-word_list = load_words()
-
-
 def load_users():
     try:
         with open(USER_FILE, "r") as file:
@@ -53,10 +50,9 @@ def save_users():
         json.dump(list(subscribed_users), file)
 
 
-# Initialize the set of users
+word_list = load_words()
 subscribed_users = load_users()
 
-# Dictionary to store active quiz words for each user
 active_quiz = {}
 
 
@@ -79,8 +75,8 @@ async def quiz(update, context):
 async def send_quiz(chat_id, is_scheduled=False):
     selected_words = random.sample(word_list, AMOUNT_WORDS_PER_QUIZ)
     ask_in_english = random.choice([True, False])
-
-    message = f"🔍 Translate these 5 words **into {'German' if ask_in_english else 'English'}**:\n\n"
+    message = "🥳 Daily Quiz 🥳\n" if is_scheduled else ""
+    message += f"🔍 Translate these 5 words **into {'German' if ask_in_english else 'English'}**:\n\n"
     words = []
 
     for idx, (eng, ger) in enumerate(selected_words, start=1):
@@ -173,7 +169,6 @@ async def subscribe(update, context):
 
 
 async def unsubscribe(update, context):
-    """Unsubscribe the user from daily messages."""
     log_received_message(update)
 
     chat_id = update.message.chat.id
@@ -200,7 +195,6 @@ async def debug(update, context):
 
 # Schedule daily quiz at 9 AM
 def schedule_quiz():
-    """Run the scheduled quiz function asynchronously."""
     asyncio.run(send_daily_quiz())
 
 
