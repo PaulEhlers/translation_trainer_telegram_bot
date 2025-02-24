@@ -1,5 +1,6 @@
 import telegram
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram import ReactionTypeEmoji
 import random
 import schedule
 import time
@@ -16,33 +17,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load bot token from environment variables
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Sample vocabulary words (English-German)
-word_list = [
-    ("apple", "Apfel"),
-    ("car", "Auto"),
-    ("house", "Haus"),
-    ("book", "Buch"),
-    ("friend", "Freund"),
-    ("water", "Wasser"),
-    ("sun", "Sonne"),
-    ("teacher", "Lehrer"),
-    ("computer", "Computer"),
-    ("school", "Schule"),
-    ("dog", "Hund"),
-    ("family", "Familie"),
-    ("tree", "Baum"),
-    ("road", "Straße"),
-    ("music", "Musik")
-]
-
-# File to store subscribed users
 USER_FILE = "users.json"
+WORDS_FILE = "words.json"
+
+AMOUNT_WORDS_PER_QUIZ = 5
 
 
-# Load existing users from file
+def load_words():
+    try:
+        with open(WORDS_FILE, "r", encoding="utf-8") as file:
+            return json.load(file)
+    except FileNotFoundError:
+        logger.error(f"Datei {WORDS_FILE} nicht gefunden! Stelle sicher, dass sie existiert.")
+        return []
+    except json.JSONDecodeError:
+        logger.error(f"Fehler beim Lesen von {WORDS_FILE}. Stelle sicher, dass die Datei gültiges JSON enthält.")
+        return []
+
+
+word_list = load_words()
+
+
 def load_users():
     try:
         with open(USER_FILE, "r") as file:
@@ -81,24 +78,24 @@ async def quiz(update, context):
     log_received_message(update)
     await send_quiz(update.message.chat.id)
 
+
 async def send_quiz(chat_id, is_scheduled=False):
-    """Send a random English or German word for translation."""
-    eng, ger = random.choice(word_list)  # Pick a random word pair
+    selected_words = random.sample(word_list, AMOUNT_WORDS_PER_QUIZ)
+    ask_in_english = random.choice([True, False])
 
-    # Randomly decide whether to ask for the English or German translation
-    if random.choice([True, False]):
-        question, answer, lang = eng, ger, "English"  # Ask for German
-    else:
-        question, answer, lang = ger, eng, "German"  # Ask for English
+    message = f"🔍 Translate these 5 words **into {'German' if ask_in_english else 'English'}**:\n\n"
+    words = []
 
-    message = f"🔍 Translate this word from {lang}:\n➡️ *{question}*"
+    for idx, (eng, ger) in enumerate(selected_words, start=1):
+        question = eng if ask_in_english else ger  # Ask in one language
+        answer = ger if ask_in_english else eng  # Expect answer in the other
+
+        words.append((question, answer))  # Store question-answer pair
+        message += f"{idx}. {question}\n"
 
     try:
         bot = Application.builder().token(TOKEN).build().bot
         await bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
-
-        # Store the active quiz word for checking later
-        active_quiz[chat_id] = (question, answer, lang)
 
         log_prefix = "[Scheduled]" if is_scheduled else "[Manual /quiz]"
         log_sent_message(chat_id, f"{log_prefix} {message}")
@@ -106,30 +103,56 @@ async def send_quiz(chat_id, is_scheduled=False):
     except Exception as e:
         logger.error(f"Failed to send quiz to {chat_id}: {e}")
 
+    active_quiz[chat_id] = {"words": words, "answers_received": []}
+    log_sent_message(chat_id, message)
+
+
 async def check_answer(update, context):
     """Check if the user's answer is correct."""
     log_received_message(update)
 
     chat_id = update.message.chat.id
+    message_id = update.message.message_id
     user_response = update.message.text.strip()
 
-    if chat_id in active_quiz:
-        question, correct_answer, lang = active_quiz[chat_id]
+    if chat_id not in active_quiz:
+        await update.message.reply_text("I wasn't asking a word. Type /quiz to start!", parse_mode="Markdown")
+        return
 
-        if user_response.lower() == correct_answer.lower():
-            response = "✅ Correct! Well done! 🎉"
-        else:
-            response = f"❌ Wrong! The correct answer is: *{correct_answer}*"
+    quiz_data = active_quiz[chat_id]
+    words = quiz_data["words"]
+    answers_received = quiz_data["answers_received"]
 
-        await update.message.reply_text(response, parse_mode="Markdown")
-        log_sent_message(chat_id, response)
+    correct_answer = words[len(answers_received)][1]  # Get expected answer for current position
+    is_correct = user_response.lower() == correct_answer.lower()
 
-        # Remove the question after answering
-        del active_quiz[chat_id]
-    else:
-        response = "I wasn't asking a word. Type /quiz to start!"
-        await update.message.reply_text(response)
-        log_sent_message(chat_id, response)
+    # React with an emoji instead of sending a message
+    try:
+        reaction = [ReactionTypeEmoji('👍' if is_correct else '👎')]
+        await context.bot.set_message_reaction(
+            chat_id=chat_id,
+            message_id=message_id,
+            reaction=reaction
+        )
+    except Exception as e:
+        logger.error(f"Failed to react with emoji for user {chat_id}: {e}")
+
+    # Store answer status
+    answers_received.append(is_correct)
+
+    # If 5 answers received, summarize results
+    if len(answers_received) == 5:
+        correct_count = sum(answers_received)
+        summary = f"📊 **Quiz Results:** {correct_count}/5 correct!\n\n"
+
+        for idx, (word, answer) in enumerate(words, start=1):
+            status = "✅" if answers_received[idx - 1] else "❌"
+            summary += f"{idx}. {word} → {answer} {status}\n"
+
+        await update.message.reply_text(summary, parse_mode="Markdown")
+        log_sent_message(chat_id, summary)
+
+        del active_quiz[chat_id]  # Remove quiz after summary
 
 
 async def start(update, context):
@@ -180,8 +203,10 @@ async def send_daily_quiz():
     for user in subscribed_users:
         await send_quiz(user, is_scheduled=True)
 
+
 async def debug(update, context):
     await send_daily_quiz()
+
 
 # Schedule daily quiz at 9 AM
 def schedule_quiz():
