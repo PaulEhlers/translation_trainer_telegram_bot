@@ -43,25 +43,24 @@ word_list = load_words()
 def load_users():
     try:
         with open(USER_FILE, "r") as file:
-            return set(json.load(file))  # Convert list to set
+            return set(json.load(file))
     except (FileNotFoundError, json.JSONDecodeError):
-        return set()  # If file not found, return empty set
+        return set()
 
 
 def save_users():
     with open(USER_FILE, "w") as file:
-        json.dump(list(subscribed_users), file)  # Convert set to list
+        json.dump(list(subscribed_users), file)
 
 
 # Initialize the set of users
 subscribed_users = load_users()
 
 # Dictionary to store active quiz words for each user
-active_quiz = {}  # {chat_id: (question, correct_answer, language)}
+active_quiz = {}
 
 
 def log_received_message(update):
-    """Log every received message."""
     chat_id = update.message.chat.id
     user_name = update.message.from_user.full_name
     user_message = update.message.text
@@ -69,12 +68,10 @@ def log_received_message(update):
 
 
 def log_sent_message(chat_id, text):
-    """Log every sent message."""
     logger.info(f"Sent to (ID: {chat_id}): {text}")
 
 
 async def quiz(update, context):
-    """Handle the /quiz command and send a quiz to the user."""
     log_received_message(update)
     await send_quiz(update.message.chat.id)
 
@@ -87,10 +84,10 @@ async def send_quiz(chat_id, is_scheduled=False):
     words = []
 
     for idx, (eng, ger) in enumerate(selected_words, start=1):
-        question = eng if ask_in_english else ger  # Ask in one language
-        answer = ger if ask_in_english else eng  # Expect answer in the other
+        question = eng if ask_in_english else ger
+        answer = ger if ask_in_english else eng
 
-        words.append((question, answer))  # Store question-answer pair
+        words.append((question, answer))
         message += f"{idx}. {question}\n"
 
     try:
@@ -108,7 +105,6 @@ async def send_quiz(chat_id, is_scheduled=False):
 
 
 async def check_answer(update, context):
-    """Check if the user's answer is correct."""
     log_received_message(update)
 
     chat_id = update.message.chat.id
@@ -123,10 +119,9 @@ async def check_answer(update, context):
     words = quiz_data["words"]
     answers_received = quiz_data["answers_received"]
 
-    correct_answer = words[len(answers_received)][1]  # Get expected answer for current position
+    correct_answer = words[len(answers_received)][1]
     is_correct = user_response.lower() == correct_answer.lower()
 
-    # React with an emoji instead of sending a message
     try:
         reaction = [ReactionTypeEmoji('👍' if is_correct else '👎')]
         await context.bot.set_message_reaction(
@@ -137,10 +132,8 @@ async def check_answer(update, context):
     except Exception as e:
         logger.error(f"Failed to react with emoji for user {chat_id}: {e}")
 
-    # Store answer status
     answers_received.append(is_correct)
 
-    # If 5 answers received, summarize results
     if len(answers_received) == 5:
         correct_count = sum(answers_received)
         summary = f"📊 **Quiz Results:** {correct_count}/5 correct!\n\n"
@@ -152,11 +145,10 @@ async def check_answer(update, context):
         await update.message.reply_text(summary, parse_mode="Markdown")
         log_sent_message(chat_id, summary)
 
-        del active_quiz[chat_id]  # Remove quiz after summary
+        del active_quiz[chat_id]
 
 
 async def start(update, context):
-    """Send a welcome message."""
     log_received_message(update)
 
     response = "👋 Hello! Use /quiz to practice or /subscribe to receive daily words at 9 AM!"
@@ -165,7 +157,6 @@ async def start(update, context):
 
 
 async def subscribe(update, context):
-    """Subscribe the user to daily messages."""
     log_received_message(update)
 
     chat_id = update.message.chat.id
@@ -199,7 +190,6 @@ async def unsubscribe(update, context):
 
 
 async def send_daily_quiz():
-    """Send a scheduled quiz to all subscribed users."""
     for user in subscribed_users:
         await send_quiz(user, is_scheduled=True)
 
